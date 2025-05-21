@@ -54,7 +54,7 @@ resource "coder_agent" "main" {
 module "kubernetes_infra" {
 
   #  source = "./../../kubernetes-infra"
-  source = "git::https://gitlab.ics.muni.cz/485555/kubernetes-infra.git?ref=v4.0.7"
+  source = "git::https://gitlab.ics.muni.cz/485555/kubernetes-infra.git?ref=v4.0.12"
   coder_user_data = local.user_data
   coder_agent_token = try(coder_agent.main.token, "")
   # Example of variable override

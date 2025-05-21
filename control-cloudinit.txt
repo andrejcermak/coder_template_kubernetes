@@ -1,7 +1,0 @@
-users:
-  - default
-  - name: ubuntu
-    shell: /bin/bash
-  package_update: true
-package_upgrade: true
-

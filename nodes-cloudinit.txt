@@ -1,4 +1,0 @@
-users:
-  - default
-  - name: ubuntu
-    shell: /bin/bash
