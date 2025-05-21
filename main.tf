@@ -39,15 +39,28 @@ resource "openstack_compute_keypair_v2" "kubernetes" {
 }
 
 
+resource "coder_agent" "main" {
+  arch = data.coder_provisioner.me.arch
+  os   = data.coder_provisioner.me.os
+  order = 1
+  metadata {
+  display_name = "admin_conf"
+  key          = "admin_conf"
+  script       = "[ -e ~/kubernetes-infra-example/ansible/artifacts/admin.conf ] && cat ~/kubernetes-infra-example/ansible/artifacts/admin.conf || echo 'wait for the kubeconfig' "
+  interval     = 60 
+  order        = 1
+  }
+}
 module "kubernetes_infra" {
 
   #  source = "./../../kubernetes-infra"
-  source = "git::https://gitlab.ics.muni.cz/485555/kubernetes-infra.git?ref=v4.0.5"
+  source = "git::https://gitlab.ics.muni.cz/485555/kubernetes-infra.git?ref=v4.0.7"
   coder_user_data = local.user_data
   coder_agent_token = try(coder_agent.main.token, "")
   # Example of variable override
   infra_name = "infra-name-2"
   ssh_public_key = "dynamic"
+  bastion_image = "kost-test"
   ssh_public_key_value = openstack_compute_keypair_v2.kubernetes.public_key
   control_nodes_count       = data.coder_parameter.control_nodes_count.value
   control_nodes_volume_size = 30
@@ -60,6 +73,7 @@ module "kubernetes_infra" {
       flavor      = "e1.medium"
       volume_size = 30
       count       = data.coder_parameter.worker_nodes_count.value
+      additional_volumes = []
     }
   ]
   custom_security_group_rules = {
@@ -131,19 +145,6 @@ resource "coder_agent_instance" "dev" {
   instance_id = module.kubernetes_infra.bastion_id
 }
 
-resource "coder_agent" "main" {
-  arch = data.coder_provisioner.me.arch
-  os   = data.coder_provisioner.me.os
-  order = 1
-  metadata {
-  display_name = "admin_conf"
-  key          = "admin_conf"
-  script       = "[ -e ~/kubernetes-infra-example/ansible/artifacts/admin.conf ] && cat ~/kubernetes-infra-example/ansible/artifacts/admin.conf || echo 'wait for the kubeconfig' "
-  interval     = 60 
-  order        = 1
-  }
-}
-
 data "local_file" "k8s_inventory" {
   depends_on = [module.kubernetes_infra]
   filename = "../ansible/ansible_inventory"
@@ -160,7 +161,6 @@ resource "coder_script" "startup_script" {
   display_name       = "Startup Script"
   script             = <<-EOF
     #!/bin/sh
-        #!/bin/sh
     whoami
 
     echo ${data.local_file.k8s_inventory.content}
@@ -171,19 +171,6 @@ resource "coder_script" "startup_script" {
     git clone https://gitlab.ics.muni.cz/485555/kubernetes-infra-example.git
     cd ./kubernetes-infra-example
     cd ./ansible/01-playbook
-    sudo apt update > /dev/null 
-    sudo apt install -y nginx build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev libsqlite3-dev wget libbz2-dev > /dev/null 
-    wget https://www.python.org/ftp/python/3.10.0/Python-3.10.0.tgz  > /dev/null 
-    tar -xvf Python-3.10.0.tgz > /dev/null 
-    cd Python-3.10.0
-    sudo ./configure --enable-optimizations > /dev/null 
-
-    sudo make -j 2 > /dev/null 
-    sudo make altinstall > /dev/null 
-    cd ..
-    sudo apt install -y pipx python3.8-venv > /dev/null 
-    pipx ensurepath > /dev/null 
-    pipx install --include-deps ansible > /dev/null 
 
     echo 'external_openstack_application_credential_name: ${data.coder_parameter.application_credential_name.value}' >> ../group_vars/all/openstack.yml
     echo 'external_openstack_application_credential_id: ${data.coder_parameter.application_credential_id.value}' >> ../group_vars/all/openstack.yml
@@ -205,16 +192,20 @@ resource "coder_script" "startup_script" {
     echo '${openstack_compute_keypair_v2.kubernetes.private_key}' > ~/.ssh/id_rsa
     chmod 600 ~/.ssh/id_rsa
 
-    python3.10 -m pip install -r requirements.txt > /dev/null 
-    /home/ubuntu/.local/bin/ansible-galaxy install -r requirements.yml
-    /home/ubuntu/.local/bin/ansible-playbook -i ../ansible_inventory --user=ubuntu --become --become-user=root play.yml
+
+    python3 -m venv venv
+    chmod +x venv/bin/activate
+    . venv/bin/activate
+    pip install -r requirements.txt
+    ansible-galaxy install -r requirements.yml
+    ansible-playbook -i ../ansible_inventory --user=ubuntu --become --become-user=root play.yml
 
     
     sudo mkdir -p /var/www/html/kubernetes-infra-example/ansible/artifacts
     sudo cp ~/kubernetes-infra-example/ansible/artifacts/admin.conf /var/www/html/kubernetes-infra-example/ansible/artifacts/
     sudo chown -R www-data:www-data /var/www/html/kubernetes-infra-example
     sudo chmod -R 755 /var/www/html/kubernetes-infra-example
-
+    export NGINX_CONF=/etc/nginx/conf.d/default.conf
     sudo bash -c "cat > $NGINX_CONF" <<EOL
     server {
       listen 8080 default_server;

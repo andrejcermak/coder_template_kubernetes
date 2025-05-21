@@ -1,0 +1,66 @@
+users:
+  - default
+  - name: ubuntu
+    shell: /bin/bash
+
+write_files:
+  - path: /usr/local/bin/mount-unmounted-disks.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+
+      # Log output for debugging
+      LOG_FILE="/var/log/cloud-init-unmounted-disks.log"
+      exec > >(tee -a "${LOG_FILE}") 2>&1
+
+      echo "Starting disk discovery and mounting process..."
+
+      # Find unmounted disks
+      UNMOUNTED_DISKS=$(lsblk -ndp -o NAME | while read -r DISK; do
+          if lsblk -np "$DISK" | grep -q 'part' && mount | grep -q "$(lsblk -np -o NAME "$DISK" | grep part)"; then
+              continue
+          else
+              echo "$DISK"
+          fi
+      done)
+
+      # Process each unmounted disk
+      for DISK in $UNMOUNTED_DISKS; do
+          echo "Processing disk: $DISK"
+
+          # Create a single partition (if not already partitioned)
+          if ! lsblk -np "$DISK" | grep -q 'part'; then
+              echo "Creating partition on $DISK"
+              parted --script "$DISK" mklabel gpt
+              parted --script "$DISK" mkpart primary ext4 0% 100%
+              PARTITION="${DISK}1"
+              echo "Created partition: $PARTITION"
+          else
+              PARTITION=$(lsblk -np -o NAME "$DISK" | grep 'part' | head -n 1)
+              echo "Found existing partition: $PARTITION"
+          fi
+
+          # Format the partition if not already formatted
+          if ! blkid "$PARTITION" >/dev/null 2>&1; then
+              echo "Formatting partition: $PARTITION"
+              mkfs.ext4 "$PARTITION"
+          fi
+
+          # Mount the partition
+          MOUNT_POINT="/var/lib/containerd/"
+          mkdir -p "$MOUNT_POINT"
+          echo "Mounting $PARTITION at $MOUNT_POINT"
+          mount "$PARTITION" "$MOUNT_POINT"
+
+          # Add to /etc/fstab for persistence
+          UUID=$(blkid -s UUID -o value "$PARTITION")
+          echo "UUID=$UUID $MOUNT_POINT ext4 defaults,nofail 0 2" >> /etc/fstab
+      done
+
+      echo "Disk mounting process completed."
+      echo "Check ${LOG_FILE} for details."
+      
+runcmd:
+  - /usr/local/bin/mount-unmounted-disks.sh
+
